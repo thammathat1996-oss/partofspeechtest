@@ -1,0 +1,872 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { Trophy, ArrowRight, RotateCcw, Play, CheckCircle, XCircle, Download, Trash2, Search, Shield, Users, Database, ChevronLeft, ChevronRight, Send } from 'lucide-react';
+
+// ----------------------------------------------------------------------
+// 1. FIREBASE SETUP
+// ----------------------------------------------------------------------
+const firebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config ? JSON.parse(__firebase_config) : {};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// ----------------------------------------------------------------------
+// 2. EXAM DATA (30 Mixed Questions)
+// ----------------------------------------------------------------------
+const QUESTIONS = [
+  { q: "คำนาม (Noun) หมายถึงอะไร ทำหน้าที่อะไร?", opts: ["คน สัตว์ สิ่งของ สถานที่", "การกระทำหรือสภาพ", "คำเชื่อมประโยค", "คำแสดงอารมณ์"], a: "คน สัตว์ สิ่งของ สถานที่" },
+  { q: "คำกริยา (Verb) คือคำประเภทใด?", opts: ["คำแทนชื่อคน", "คำแสดงการกระทำหรือสภาพ", "คำขยายสิ่งของ", "คำอุทานตกใจ"], a: "คำแสดงการกระทำหรือสภาพ" },
+  { q: "Adjective ทำหน้าที่อะไรในประโยค?", opts: ["แทนชื่อคน สัตว์ สิ่งของ", "บอกตำแหน่งที่อยู่", "ขยายคำนามหรือสรรพนาม", "เชื่อมประโยคเข้าด้วยกัน"], a: "ขยายคำนามหรือสรรพนาม" },
+  { q: "ข้อใดคือหน้าที่ของ Pronoun (คำสรรพนาม)?", opts: ["ขยายการกระทำ", "เชื่อมคำสองคำเข้าด้วยกัน", "ใช้แทนคำนามเพื่อลดการซ้ำคำ", "บอกเวลาและสถานที่"], a: "ใช้แทนคำนามเพื่อลดการซ้ำคำ" },
+  { q: "ข้อใดต่อไปนี้เป็น Noun ทั้งหมด?", opts: ["dog, tree, school", "run, jump, swim", "beautiful, red, tall", "in, on, under"], a: "dog, tree, school" },
+  { q: "ข้อใดต่อไปนี้เป็น Verb ทั้งหมด?", opts: ["eat, sleep, play", "cat, dog, rat", "he, she, it", "and, but, or"], a: "eat, sleep, play" },
+  { q: "คำว่า 'beautiful' เป็นคำประเภทใด?", opts: ["Noun", "Verb", "Adjective", "Adverb"], a: "Adjective" },
+  { q: "คำว่า 'happily' เป็นคำประเภทใด?", opts: ["Noun", "Verb", "Adjective", "Adverb"], a: "Adverb" },
+  { q: "คำใดคือ Preposition (คำบุพบท)?", opts: ["under", "because", "ouch!", "quickly"], a: "under" },
+  { q: "คำใดคือ Conjunction (คำสันธาน)?", opts: ["and", "house", "jump", "they"], a: "and" },
+  { q: "She is a _____ girl. (ต้องการคำประเภทใดมาเติม?)", opts: ["Noun", "Verb", "Adjective", "Preposition"], a: "Adjective" },
+  { q: "He drives very _____. (ต้องการคำประเภทใดมาเติม?)", opts: ["Noun", "Pronoun", "Adverb", "Conjunction"], a: "Adverb" },
+  { q: "The *cat* is sleeping on the sofa.", opts: ["Noun", "Verb", "Adjective", "Adverb"], a: "Noun" },
+  { q: "She *runs* quickly.", opts: ["Noun", "Verb", "Adjective", "Adverb"], a: "Verb" },
+  { q: "The turtle walks *slowly*.", opts: ["Verb", "Adjective", "Adverb", "Preposition"], a: "Adverb" },
+  { q: "*They* went to the cinema together.", opts: ["Noun", "Pronoun", "Verb", "Conjunction"], a: "Pronoun" },
+  { q: "The book is *on* the table.", opts: ["Adjective", "Adverb", "Preposition", "Conjunction"], a: "Preposition" },
+  { q: "I like coffee, *but* my sister likes tea.", opts: ["Pronoun", "Preposition", "Conjunction", "Interjection"], a: "Conjunction" },
+  { q: "*Wow!* That is a beautiful car.", opts: ["Adverb", "Preposition", "Conjunction", "Interjection"], a: "Interjection" },
+  { q: "We saw a *huge* elephant at the zoo.", opts: ["Noun", "Adjective", "Adverb", "Preposition"], a: "Adjective" },
+  { q: "My *mother* bakes delicious cookies.", opts: ["Noun", "Verb", "Adjective", "Pronoun"], a: "Noun" },
+  { q: "Please *listen* carefully to the instructions.", opts: ["Noun", "Verb", "Adverb", "Interjection"], a: "Verb" },
+  { q: "This pen is *mine*.", opts: ["Noun", "Pronoun", "Adjective", "Adverb"], a: "Pronoun" },
+  { q: "He walked *through* the dark forest.", opts: ["Adverb", "Preposition", "Conjunction", "Interjection"], a: "Preposition" },
+  { q: "You can have tea *or* coffee.", opts: ["Preposition", "Conjunction", "Adverb", "Pronoun"], a: "Conjunction" },
+  { q: "*Ouch!* I bit my tongue.", opts: ["Adjective", "Preposition", "Conjunction", "Interjection"], a: "Interjection" },
+  { q: "Honesty is the best *policy*.", opts: ["Noun", "Verb", "Adjective", "Adverb"], a: "Noun" },
+  { q: "The children *are playing* outside.", opts: ["Noun", "Verb", "Adverb", "Preposition"], a: "Verb" },
+  { q: "He *always* forgets his keys.", opts: ["Verb", "Adjective", "Adverb", "Preposition"], a: "Adverb" },
+  { q: "The plane flew *above* the clouds.", opts: ["Adverb", "Preposition", "Conjunction", "Interjection"], a: "Preposition" }
+];
+
+// ----------------------------------------------------------------------
+// 3. 8-BIT AUDIO SYNTHESIZER
+// ----------------------------------------------------------------------
+let audioCtx = null;
+const initAudio = () => {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+};
+
+const playSFX = (type) => {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  osc.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  
+  if (type === 'start') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+    gainNode.gain.setValueAtTime(0.05, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+    osc.start(now); osc.stop(now + 0.1);
+  } else if (type === 'correct') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.setValueAtTime(1000, now + 0.05);
+    gainNode.gain.setValueAtTime(0.1, now);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+    osc.start(now); osc.stop(now + 0.2);
+  }
+};
+
+// ----------------------------------------------------------------------
+// 4. ANIMATED GHOST COMPONENT
+// ----------------------------------------------------------------------
+const GhostIcon = () => (
+  <div className="flex justify-center items-center h-[70px] mb-2 mt-1">
+    <div id="ghost">
+      <div id="shadow"></div>
+      <div id="red">
+        <div id="top0"></div><div id="top1"></div><div id="top2"></div><div id="top3"></div><div id="top4"></div>
+        <div id="st0"></div><div id="st1"></div><div id="st2"></div><div id="st3"></div><div id="st4"></div><div id="st5"></div>
+        <div id="an1"></div><div id="an2"></div><div id="an3"></div><div id="an4"></div>
+        <div id="an6"></div><div id="an7"></div><div id="an8"></div><div id="an9"></div>
+        <div id="an10"></div><div id="an11"></div><div id="an12"></div><div id="an13"></div>
+        <div id="an15"></div><div id="an16"></div><div id="an17"></div><div id="an18"></div>
+        <div id="eye"></div><div id="eye1"></div>
+        <div id="pupil"></div><div id="pupil1"></div>
+      </div>
+    </div>
+  </div>
+);
+
+// ----------------------------------------------------------------------
+// 5. MAIN APP
+// ----------------------------------------------------------------------
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [appMode, setAppMode] = useState('student');
+  const [appState, setAppState] = useState('intro'); 
+  
+  // Game State
+  const [student, setStudent] = useState({ name: '', studentNo: '', room: '4/7' }); 
+  const [currentQIndex, setCurrentQIndex] = useState(0);
+  const [userAnswers, setUserAnswers] = useState(new Array(QUESTIONS.length).fill(null));
+  const [score, setScore] = useState(0);
+  
+  // UI & Form States
+  const [formError, setFormError] = useState('');
+  
+  // Custom Modal States
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+  const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+  
+  // Admin State
+  const [isSaving, setIsSaving] = useState(false);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [adminSearch, setAdminSearch] = useState('');
+
+  const scrollRef = useRef(null);
+
+  // Firebase Init
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) { console.error("Auth error:", err); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Data for Admin
+  useEffect(() => {
+    if (!user) return;
+    const scoresRef = collection(db, 'artifacts', appId, 'public', 'data', 'pos_exam_scores');
+    const unsub = onSnapshot(scoresRef, (snap) => {
+      const data = [];
+      snap.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => b.score - a.score || new Date(b.timestamp) - new Date(a.timestamp));
+      setLeaderboard(data);
+    });
+    return () => unsub();
+  }, [user]);
+
+  // Scroll Nav smoothly
+  useEffect(() => {
+    if (appState === 'quiz' && scrollRef.current) {
+      const activeBtn = scrollRef.current.children[currentQIndex];
+      if (activeBtn) {
+        activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+  }, [currentQIndex, appState]);
+
+  // ----------------------------------------------------------------------
+  // 6. GAME CONTROLLERS
+  // ----------------------------------------------------------------------
+  const handleStartForm = () => {
+    initAudio();
+    playSFX('start');
+    setAppState('form');
+  };
+
+  const handleStartQuiz = (e) => {
+    e.preventDefault();
+    if (!student.name || !student.studentNo || !student.room) {
+      setFormError("⚠️ กรุณากรอกข้อมูลให้ครบถ้วน!");
+      return;
+    }
+    setFormError('');
+    initAudio();
+    playSFX('start');
+    setAppState('quiz');
+    setCurrentQIndex(0);
+    setUserAnswers(new Array(QUESTIONS.length).fill(null));
+    setScore(0);
+  };
+
+  const handleSelectAnswer = (selectedOpt) => {
+    initAudio();
+    playSFX('start');
+    const newAnswers = [...userAnswers];
+    newAnswers[currentQIndex] = selectedOpt;
+    setUserAnswers(newAnswers);
+  };
+
+  const goNext = () => {
+    if (currentQIndex < QUESTIONS.length - 1) {
+      initAudio(); playSFX('start');
+      setCurrentQIndex(prev => prev + 1);
+    }
+  };
+
+  const goPrev = () => {
+    if (currentQIndex > 0) {
+      initAudio(); playSFX('start');
+      setCurrentQIndex(prev => prev - 1);
+    }
+  };
+
+  const jumpToQuestion = (index) => {
+    initAudio(); playSFX('start');
+    setCurrentQIndex(index);
+  };
+
+  const attemptSubmit = () => {
+    initAudio(); playSFX('start');
+    const unansweredCount = userAnswers.filter(ans => ans === null).length;
+    if (unansweredCount > 0) {
+      setShowConfirmSubmit(true);
+    } else {
+      processSubmit();
+    }
+  };
+
+  const processSubmit = async () => {
+    setShowConfirmSubmit(false);
+    initAudio(); playSFX('correct'); // Play win sound
+    
+    // Calculate final score
+    let finalScore = 0;
+    userAnswers.forEach((ans, i) => {
+      if (ans === QUESTIONS[i].a) finalScore++;
+    });
+    
+    setScore(finalScore);
+    setAppState('result');
+    setIsSaving(true);
+    
+    try {
+      const payload = {
+        ...student,
+        score: finalScore,
+        total: QUESTIONS.length,
+        timestamp: new Date().toISOString(),
+        userId: user ? user.uid : 'anonymous'
+      };
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'pos_exam_scores'), payload);
+    } catch (err) { console.error("Error saving score: ", err); } 
+    finally { setIsSaving(false); }
+  };
+
+  const restartGame = () => {
+    setStudent({ name: '', studentNo: '', room: '4/7' });
+    setUserAnswers(new Array(QUESTIONS.length).fill(null));
+    setAppState('intro');
+  };
+
+  // ----------------------------------------------------------------------
+  // 7. ADMIN ACTIONS & CUSTOM MODALS
+  // ----------------------------------------------------------------------
+  const handleModeSwitch = (mode) => {
+    if (mode === 'admin') {
+      setShowPinModal(true);
+      setPinInput('');
+      setPinError(false);
+    } else {
+      setAppMode('student');
+      setAppState('intro');
+    }
+  };
+
+  const submitPin = () => {
+    if (pinInput === "9999") { 
+      setAppMode('admin');
+      setShowPinModal(false);
+    } else {
+      setPinError(true);
+    }
+  };
+
+  const triggerDelete = (id) => setDeleteId(id);
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pos_exam_scores', deleteId)); } 
+    catch (err) { console.error("Delete error", err); }
+    setDeleteId(null);
+  };
+
+  const exportCSV = () => {
+    const BOM = "\uFEFF";
+    let csvContent = BOM + "วันที่,ชื่อ-นามสกุล,เลขที่,ห้อง,คะแนนที่ได้,คะแนนเต็ม\n"; 
+    const exportData = [...leaderboard].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    exportData.forEach(row => {
+      const date = new Date(row.timestamp).toLocaleString('th-TH');
+      csvContent += `"${date}","${row.name}","${row.studentNo}","${row.room}","${row.score}","${row.total}"\n`;
+    });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `P.O.S_Scores_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const filteredAdminList = leaderboard.filter(item => 
+    item.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
+    (item.studentNo && item.studentNo.includes(adminSearch)) || 
+    item.room.includes(adminSearch)
+  );
+
+  // Helper
+  const answeredCount = userAnswers.filter(ans => ans !== null).length;
+
+  // ----------------------------------------------------------------------
+  // 8. STYLES
+  // ----------------------------------------------------------------------
+  const pixelBorder = "border-4 border-black shadow-[4px_4px_0_0_rgba(0,0,0,1)] md:shadow-[6px_6px_0_0_rgba(0,0,0,1)]";
+  const pixelBtn = `transform active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_0_rgba(0,0,0,1)] transition-all font-bold cursor-pointer ${pixelBorder}`;
+
+  // ----------------------------------------------------------------------
+  // 9. RENDER
+  // ----------------------------------------------------------------------
+  return (
+    <div className="min-h-screen bg-[#2b2b45] text-white font-sans selection:bg-pink-500 flex flex-col relative" style={{ fontFamily: "'Courier New', Courier, monospace" }}>
+      
+      {/* CSS Injections */}
+      <style dangerouslySetInnerHTML={{__html: `
+        .retro-text { text-shadow: 2px 2px 0px #000; }
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0; } }
+        .pixel-bg { background-image: radial-gradient(#ffffff22 1px, transparent 0); background-size: 20px 20px; }
+        
+        /* 🔥 WOW 3D ARCADE TITLE 🔥 */
+        .arcade-title-container {
+          display: inline-block;
+          border: 6px double #00e676;
+          padding: 1rem 2rem;
+          background: rgba(0,0,0,0.8);
+          animation: border-dance 0.5s infinite step-end;
+          box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        @keyframes border-dance {
+          0%, 100% { border-color: #ff0055; box-shadow: inset 0 0 10px #ff0055; }
+          33% { border-color: #ffcc00; box-shadow: inset 0 0 10px #ffcc00; }
+          66% { border-color: #00e676; box-shadow: inset 0 0 10px #00e676; }
+        }
+        .arcade-title-text {
+          color: #fff;
+          font-weight: 900;
+          letter-spacing: 2px;
+          text-shadow: 
+            2px 2px 0px #ff0055,
+            4px 4px 0px #ff0055,
+            6px 6px 0px #00e676,
+            8px 8px 0px #00e676,
+            10px 10px 0px #ffcc00;
+          animation: pulse-title 2s infinite ease-in-out;
+        }
+        @keyframes pulse-title {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+
+        /* Gimmick Animations */
+        @keyframes pop {
+          0% { transform: scale(0.9); opacity: 0; }
+          50% { transform: scale(1.05); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop { animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+
+        /* Hide scrollbar for nav */
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Ghost Character Styles (Scaled down to 0.45 and centered) */
+        #ghost { position: relative; transform: scale(0.45); transform-origin: center; display: inline-block; }
+        #red {
+          animation: upNDown infinite 0.5s; position: relative; width: 140px; height: 140px; display: grid;
+          grid-template-columns: repeat(14, 1fr); grid-template-rows: repeat(14, 1fr);
+          grid-template-areas:
+            "a1  a2  a3  a4  a5  top0  top0  top0  top0  a10 a11 a12 a13 a14"
+            "b1  b2  b3  top1 top1 top1 top1 top1 top1 top1 top1 b12 b13 b14"
+            "c1 c2 top2 top2 top2 top2 top2 top2 top2 top2 top2 top2 c13 c14"
+            "d1 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 d14"
+            "e1 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 e14"
+            "f1 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 top3 f14"
+            "top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4"
+            "top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4"
+            "top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4"
+            "top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4"
+            "top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4"
+            "top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4 top4"
+            "st0 st0 an4 st1 an7 st2 an10 an10 st3 an13 st4 an16 st5 st5"
+            "an1 an2 an3 an5 an6 an8 an9 an9 an11 an12 an14 an15 an17 an18";
+        }
+        @keyframes upNDown { 0%, 49% { transform: translateY(0px); } 50%, 100% { transform: translateY(-10px); } }
+        #top0, #top1, #top2, #top3, #top4, #st0, #st1, #st2, #st3, #st4, #st5 { background-color: #ff0055; }
+        #top0 { grid-area: top0; } #top1 { grid-area: top1; } #top2 { grid-area: top2; } #top3 { grid-area: top3; } #top4 { grid-area: top4; }
+        #st0 { grid-area: st0; } #st1 { grid-area: st1; } #st2 { grid-area: st2; } #st3 { grid-area: st3; } #st4 { grid-area: st4; } #st5 { grid-area: st5; }
+        #an1 { grid-area: an1; animation: flicker0 infinite 0.5s; } #an18 { grid-area: an18; animation: flicker0 infinite 0.5s; }
+        #an2 { grid-area: an2; animation: flicker1 infinite 0.5s; } #an17 { grid-area: an17; animation: flicker1 infinite 0.5s; }
+        #an3 { grid-area: an3; animation: flicker1 infinite 0.5s; } #an16 { grid-area: an16; animation: flicker1 infinite 0.5s; }
+        #an4 { grid-area: an4; animation: flicker1 infinite 0.5s; } #an15 { grid-area: an15; animation: flicker1 infinite 0.5s; }
+        #an6 { grid-area: an6; animation: flicker0 infinite 0.5s; } #an12 { grid-area: an12; animation: flicker0 infinite 0.5s; }
+        #an7 { grid-area: an7; animation: flicker0 infinite 0.5s; } #an13 { grid-area: an13; animation: flicker0 infinite 0.5s; }
+        #an9 { grid-area: an9; animation: flicker1 infinite 0.5s; } #an10 { grid-area: an10; animation: flicker1 infinite 0.5s; }
+        #an8 { grid-area: an8; animation: flicker0 infinite 0.5s; } #an11 { grid-area: an11; animation: flicker0 infinite 0.5s; }
+        @keyframes flicker0 { 0%, 49% { background-color: #ff0055; } 50%, 100% { background-color: transparent; } }
+        @keyframes flicker1 { 0%, 49% { background-color: transparent; } 50%, 100% { background-color: #ff0055; } }
+        #eye { width: 40px; height: 50px; position: absolute; top: 30px; left: 10px; }
+        #eye::before { content: ""; background-color: white; width: 20px; height: 50px; transform: translateX(10px); display: block; position: absolute; }
+        #eye::after { content: ""; background-color: white; width: 40px; height: 30px; transform: translateY(10px); display: block; position: absolute; }
+        #eye1 { width: 40px; height: 50px; position: absolute; top: 30px; right: 30px; }
+        #eye1::before { content: ""; background-color: white; width: 20px; height: 50px; transform: translateX(10px); display: block; position: absolute; }
+        #eye1::after { content: ""; background-color: white; width: 40px; height: 30px; transform: translateY(10px); display: block; position: absolute; }
+        #pupil { width: 20px; height: 20px; background-color: blue; position: absolute; top: 50px; left: 10px; z-index: 1; animation: eyesMovement infinite 3s; }
+        #pupil1 { width: 20px; height: 20px; background-color: blue; position: absolute; top: 50px; right: 50px; z-index: 1; animation: eyesMovement infinite 3s; }
+        @keyframes eyesMovement { 0%, 49% { transform: translateX(0px); } 50%, 99% { transform: translateX(10px); } 100% { transform: translateX(0px); } }
+        #shadow { background-color: black; width: 140px; height: 140px; position: absolute; border-radius: 50%; transform: rotateX(80deg); filter: blur(20px); top: 80%; animation: shadowMovement infinite 0.5s; }
+        @keyframes shadowMovement { 0%, 49% { opacity: 0.5; } 50%, 100% { opacity: 0.2; } }
+      `}} />
+      <div className="fixed inset-0 pixel-bg pointer-events-none z-0 opacity-50"></div>
+
+      {/* ==================== CUSTOM MODALS ==================== */}
+      
+      {/* PIN Modal */}
+      {showPinModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
+          <div className={`bg-white p-6 md:p-8 ${pixelBorder} text-center max-w-sm w-full animate-pop`}>
+            <div className="flex justify-center mb-4"><Shield size={48} className="text-[#ff0055]" /></div>
+            <h3 className="text-xl md:text-2xl font-black text-black mb-4 retro-text text-[#ff0055]">ADMIN LOGIN</h3>
+            <p className="text-gray-600 font-bold mb-4 text-sm">กรุณาใส่รหัสผ่านเพื่อเข้าสู่ระบบแอดมิน</p>
+            <input 
+              type="password" 
+              maxLength="4"
+              value={pinInput} 
+              onChange={e => { setPinInput(e.target.value); setPinError(false); }} 
+              className="w-full bg-gray-200 text-black p-3 font-black text-center text-3xl focus:outline-none mb-2 border-4 border-black" 
+              placeholder="****"
+              autoFocus 
+            />
+            {pinError && <p className="text-red-500 font-bold mb-4 blink">ACCESS DENIED! รหัสผิดพลาด</p>}
+            <div className="flex gap-2 mt-6">
+              <button onClick={() => {setShowPinModal(false); setPinInput(''); setPinError(false);}} className={`flex-1 bg-gray-400 text-black py-3 ${pixelBtn} text-sm`}>CANCEL</button>
+              <button onClick={submitPin} className={`flex-1 bg-[#ff0055] text-white py-3 ${pixelBtn} text-sm`}>ENTER</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Delete Modal */}
+      {deleteId && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
+          <div className={`bg-white p-6 ${pixelBorder} text-center max-w-sm w-full animate-pop`}>
+            <div className="flex justify-center mb-4"><Trash2 size={48} className="text-[#ff0055]" /></div>
+            <h3 className="text-xl font-black text-[#ff0055] mb-2 retro-text">CONFIRM DELETE?</h3>
+            <p className="text-black font-bold mb-6 text-sm">คุณต้องการลบข้อมูลนี้ใช่หรือไม่?<br/><span className="text-xs text-gray-500">(หากลบแล้วจะไม่สามารถกู้คืนได้)</span></p>
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteId(null)} className={`flex-1 bg-gray-400 text-black py-2 ${pixelBtn} text-sm`}>CANCEL</button>
+              <button onClick={confirmDelete} className={`flex-1 bg-[#ff0055] text-white py-2 ${pixelBtn} text-sm`}>DELETE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Submit Unfinished Modal */}
+      {showConfirmSubmit && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
+          <div className={`bg-white p-6 ${pixelBorder} text-center max-w-sm w-full animate-pop`}>
+            <div className="flex justify-center mb-4"><CheckCircle size={48} className="text-[#ff9900]" /></div>
+            <h3 className="text-xl font-black text-[#ff9900] mb-2 retro-text">ARE YOU SURE?</h3>
+            <p className="text-black font-bold mb-6 text-sm">
+              คุณทำข้อสอบไปเพียง <span className="text-[#ff0055] text-lg">{answeredCount} / {QUESTIONS.length}</span> ข้อ<br/>
+              แน่ใจหรือไม่ที่จะส่งคำตอบตอนนี้?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowConfirmSubmit(false)} className={`flex-1 bg-gray-400 text-black py-2 ${pixelBtn} text-xs md:text-sm`}>กลับไปทำต่อ</button>
+              <button onClick={processSubmit} className={`flex-1 bg-[#00e676] text-black py-2 ${pixelBtn} text-xs md:text-sm`}>ยืนยันส่งคำตอบ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================= */}
+
+      {/* TOP NAVIGATION BAR (Compact, Sticky) */}
+      <div className="sticky top-0 z-50 w-full bg-black border-b-4 border-[#ffcc00] py-2 px-3 md:px-8 flex justify-between items-center shadow-lg">
+        <div className="flex items-center">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/4/4d/Hs_logo_mid.png" alt="School Logo" className="h-8 w-8 md:h-10 md:w-10 mr-2 md:mr-3 object-contain" />
+          <div className="text-[#ffcc00] font-black retro-text tracking-widest text-xs sm:text-sm md:text-xl whitespace-nowrap">
+            P.O.S. SYSTEM
+          </div>
+        </div>
+        <div className="flex gap-1 md:gap-4">
+          <button onClick={() => handleModeSwitch('student')} className={`px-2 md:px-4 py-1.5 md:py-2 font-bold transition-colors flex items-center text-[10px] sm:text-xs md:text-base ${appMode === 'student' ? 'bg-[#00e676] text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'}`}>
+            <Users size={14} className="md:mr-2 mr-1" /> STUDENT
+          </button>
+          <button onClick={() => handleModeSwitch('admin')} className={`px-2 md:px-4 py-1.5 md:py-2 font-bold transition-colors flex items-center text-[10px] sm:text-xs md:text-base ${appMode === 'admin' ? 'bg-[#ff0055] text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'}`}>
+            <Database size={14} className="md:mr-2 mr-1" /> ADMIN
+          </button>
+        </div>
+      </div>
+
+      {/* MAIN CONTENT AREA */}
+      <div className={`relative z-10 flex-grow flex flex-col items-center py-4 md:py-8 px-3 w-full max-w-3xl mx-auto`}>
+        
+        {/* =================== STUDENT MODE ======================== */}
+        {appMode === 'student' && (
+          <div className="w-full flex-1 flex flex-col justify-center">
+            
+            {appState !== 'quiz' && (
+              <div className="text-center w-full mx-auto mb-6 mt-4 relative">
+                <div className="arcade-title-container">
+                  <h1 className="text-3xl sm:text-4xl md:text-5xl arcade-title-text whitespace-nowrap">
+                    PART OF SPEECH<br/>EXAM
+                  </h1>
+                </div>
+                <p className="text-gray-300 font-bold mt-5 retro-text tracking-widest blink text-xs md:text-sm">
+                  &gt;&gt; 30 QUESTIONS CHALLENGE &lt;&lt;
+                </p>
+              </div>
+            )}
+
+            {/* --- 1. INTRO SCREEN --- */}
+            {appState === 'intro' && (
+              <div className={`bg-[#4ec0ca] p-4 md:p-8 ${pixelBorder} text-center space-y-3 md:space-y-4`}>
+                <GhostIcon />
+                <h2 className="text-lg md:text-2xl font-bold text-black uppercase mb-1">แบบทดสอบภาษาอังกฤษ</h2>
+                <div className="text-black font-semibold text-xs md:text-base leading-relaxed bg-white/30 p-3 md:p-4 border-2 border-black border-dashed text-left shadow-[2px_2px_0_0_rgba(0,0,0,1)]">
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>มีทั้งหมด 30 ข้อ 30 คะแนน</li>
+                    <li>สามารถ <span className="text-[#ff0055] font-black">เลื่อนทำข้ออื่นหรือกลับมาแก้ไข</span> ได้ตลอดเวลา</li>
+                    <li>เมื่อทำเสร็จให้กดยืนยันส่งคำตอบ</li>
+                  </ul>
+                </div>
+                <div className="pt-2 md:pt-4">
+                  <button onClick={handleStartForm} className={`bg-[#ff0055] text-white text-base md:text-xl px-4 md:px-8 py-3 md:py-4 ${pixelBtn} blink w-full flex justify-center items-center`}>
+                    <Play fill="currentColor" size={20} className="mr-2"/> INSERT COIN
+                  </button>
+                </div>
+                <button onClick={() => setAppState('leaderboard')} className="mt-2 md:mt-4 inline-block text-black underline font-bold hover:text-white text-sm md:text-base">
+                  VIEW RANKING
+                </button>
+              </div>
+            )}
+
+            {/* --- 2. REGISTRATION --- */}
+            {appState === 'form' && (
+              <div className={`bg-[#9966ff] p-5 md:p-8 ${pixelBorder}`}>
+                <h2 className="text-lg md:text-2xl font-bold text-white mb-4 md:mb-6 retro-text text-center border-b-4 border-black pb-3">
+                  PLAYER REGISTRATION
+                </h2>
+                {formError && (
+                  <div className="bg-[#ff0055] text-white p-2 md:p-3 mb-3 font-bold text-center border-2 border-black">
+                    {formError}
+                  </div>
+                )}
+                <form onSubmit={handleStartQuiz} className="space-y-3 md:space-y-4">
+                  <div>
+                    <label className="block font-bold text-white retro-text mb-1 text-xs md:text-sm">ชื่อ-นามสกุล</label>
+                    <input type="text" placeholder="ด.ช. รักเรียน ขยันยิ่ง" className={`w-full bg-white text-black p-2 md:p-3 font-bold text-sm md:text-lg focus:outline-none ${pixelBorder}`} value={student.name} onChange={e => {setStudent({...student, name: e.target.value}); setFormError('');}} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 md:gap-4">
+                    <div>
+                      <label className="block font-bold text-white retro-text mb-1 text-xs md:text-sm">เลขที่</label>
+                      <input type="number" min="1" placeholder="ex. 15" className={`w-full bg-white text-black p-2 md:p-3 font-bold text-sm md:text-lg focus:outline-none ${pixelBorder}`} value={student.studentNo} onChange={e => {setStudent({...student, studentNo: e.target.value}); setFormError('');}} />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-white retro-text mb-1 text-xs md:text-sm">ห้อง</label>
+                      <select className={`w-full bg-white text-black p-2 md:p-3 font-bold text-sm md:text-lg focus:outline-none ${pixelBorder}`} value={student.room} onChange={e => {setStudent({...student, room: e.target.value}); setFormError('');}}>
+                        <option value="4/7">4/7</option>
+                        <option value="4/9">4/9</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="pt-4 md:pt-6">
+                    <button type="submit" className={`bg-[#00e676] text-black text-base md:text-xl px-6 md:px-8 py-3 ${pixelBtn} flex items-center justify-center w-full`}>
+                      BEGIN QUIZ
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* --- 3. QUIZ GAMEPLAY (FREE NAVIGATION) --- */}
+            {appState === 'quiz' && (
+              <div className="w-full flex flex-col gap-2 relative">
+                
+                {/* HUD */}
+                <div className="bg-black p-2 md:p-3 border-b-4 border-[#ffcc00] flex justify-between items-center text-white retro-text font-bold shadow-xl rounded-t-lg text-[10px] md:text-sm">
+                  <div className="truncate max-w-[120px] md:max-w-[200px]">
+                    <span className="text-gray-500">PLAYER:</span> <span className="text-[#ffcc00]">{student.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">ANSWERED:</span> <span className={answeredCount === QUESTIONS.length ? 'text-[#00e676]' : 'text-white'}>{answeredCount}/{QUESTIONS.length}</span>
+                  </div>
+                </div>
+                
+                {/* QUESTION MAP (Pagination) */}
+                <div className="bg-gray-800 p-2 flex overflow-x-auto hide-scroll border-2 border-black gap-1 scroll-smooth" ref={scrollRef}>
+                  {QUESTIONS.map((_, i) => {
+                    const isAns = userAnswers[i] !== null;
+                    const isCur = currentQIndex === i;
+                    return (
+                      <button 
+                        key={i}
+                        onClick={() => jumpToQuestion(i)}
+                        className={`
+                          flex-shrink-0 w-8 h-8 md:w-10 md:h-10 text-xs md:text-sm font-black border-2 flex items-center justify-center transition-all
+                          ${isCur ? 'border-white blink text-white bg-black' : 
+                            isAns ? 'border-black bg-[#00e676] text-black opacity-80' : 
+                            'border-black bg-gray-500 text-gray-800 opacity-50'}
+                        `}
+                      >
+                        {i + 1}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Question Card */}
+                <div className={`bg-white text-black p-4 md:p-8 ${pixelBorder} relative overflow-hidden min-h-[140px] md:min-h-[180px] flex items-center justify-center`}>
+                  <div className="absolute top-2 left-2 text-gray-400 font-bold text-xs md:text-sm">Q. {currentQIndex + 1}</div>
+                  <h2 className="text-base md:text-2xl font-bold leading-normal md:leading-relaxed text-center break-words mt-4">
+                    {QUESTIONS[currentQIndex].q.split('*').map((part, i) => 
+                      i % 2 === 1 ? <span key={i} className="text-[#ff0055] border-b-2 md:border-b-4 border-[#ff0055] px-1 font-black">{part}</span> : part
+                    )}
+                  </h2>
+                </div>
+
+                {/* Options (Compact Grid) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3 mt-1">
+                  {QUESTIONS[currentQIndex].opts.map((opt, idx) => {
+                    const isSelected = userAnswers[currentQIndex] === opt;
+                    return (
+                      <button 
+                        key={idx} 
+                        onClick={() => handleSelectAnswer(opt)}
+                        className={`
+                          text-sm md:text-lg py-3 md:py-4 px-3 md:px-4 ${pixelBtn} leading-tight
+                          ${isSelected ? 'bg-black text-[#ffcc00] border-[#ffcc00]' : 'bg-gray-100 text-black border-black hover:bg-gray-200'}
+                        `}
+                      >
+                        {opt}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Bottom Navigation */}
+                <div className="flex justify-between items-center mt-3 gap-2">
+                  <button 
+                    onClick={goPrev} 
+                    disabled={currentQIndex === 0}
+                    className={`flex-1 py-3 font-bold text-xs md:text-sm flex items-center justify-center ${currentQIndex === 0 ? 'bg-gray-600 text-gray-400 opacity-50 cursor-not-allowed border-4 border-black' : `bg-[#4ec0ca] text-black ${pixelBtn}`}`}
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-1" /> ก่อนหน้า
+                  </button>
+
+                  <button 
+                    onClick={attemptSubmit} 
+                    className={`flex-1 py-3 font-bold text-xs md:text-sm flex items-center justify-center bg-[#ff0055] text-white ${pixelBtn} ${answeredCount === QUESTIONS.length ? 'blink' : ''}`}
+                  >
+                    <Send className="w-4 h-4 mr-1" /> ส่งคำตอบ
+                  </button>
+
+                  <button 
+                    onClick={goNext} 
+                    disabled={currentQIndex === QUESTIONS.length - 1}
+                    className={`flex-1 py-3 font-bold text-xs md:text-sm flex items-center justify-center ${currentQIndex === QUESTIONS.length - 1 ? 'bg-gray-600 text-gray-400 opacity-50 cursor-not-allowed border-4 border-black' : `bg-[#ffcc00] text-black ${pixelBtn}`}`}
+                  >
+                    ถัดไป <ChevronRight className="w-4 h-4 ml-1" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* --- 4. RESULT SCREEN --- */}
+            {appState === 'result' && (
+              <div className={`bg-[#2b2b45] p-5 md:p-8 ${pixelBorder} border-[#ffcc00] text-center space-y-4 md:space-y-6 relative overflow-hidden animate-pop`}>
+                <Trophy size={60} className="md:w-20 md:h-20 mx-auto text-[#ffcc00] drop-shadow-[4px_4px_0_rgba(0,0,0,1)] animate-pulse" />
+                <h2 className="text-xl md:text-3xl font-black text-[#00e676] retro-text">EXAM COMPLETED!</h2>
+                
+                <div className={`bg-black p-4 md:p-6 ${pixelBorder} inline-block mx-auto min-w-[180px] md:min-w-[250px]`}>
+                  <div className="text-gray-400 font-bold mb-1 md:mb-2 text-xs md:text-base">FINAL SCORE</div>
+                  <div className="text-4xl md:text-6xl font-black text-[#ffcc00] retro-text">{score} <span className="text-lg md:text-2xl text-white">/ {QUESTIONS.length}</span></div>
+                </div>
+
+                <div className="bg-white/10 p-3 md:p-4 border-2 border-white/20 text-left font-bold text-xs md:text-base max-w-sm mx-auto overflow-hidden shadow-[2px_2px_0_0_rgba(0,0,0,0.5)]">
+                  <p className="flex justify-between items-center border-b border-white/10 pb-1.5 md:pb-2">
+                    <span className="text-gray-300">PLAYER:</span> 
+                    <span className="text-[#ffcc00] truncate max-w-[140px] md:max-w-[180px]">{student.name}</span>
+                  </p>
+                  <p className="flex justify-between pt-1.5 md:pt-2 border-b border-white/10 pb-1.5 md:pb-2">
+                    <span className="text-gray-300">NO.:</span> 
+                    <span className="text-white">{student.studentNo}</span>
+                  </p>
+                  <p className="flex justify-between pt-1.5 md:pt-2">
+                    <span className="text-gray-300">ROOM:</span> 
+                    <span className="text-white">{student.room}</span>
+                  </p>
+                  <p className="flex justify-between border-t-2 border-dashed border-gray-500 pt-2 md:pt-3 mt-2 md:mt-3">
+                    <span>STATUS:</span> 
+                    {isSaving ? <span className="text-yellow-400 blink">SAVING...</span> : <span className="text-[#00e676] font-black">SAVED SUCCESSFULLY</span>}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 pt-2 md:pt-4">
+                  <button onClick={() => setAppState('leaderboard')} className={`bg-[#4ec0ca] text-black text-sm md:text-lg py-2.5 md:py-3 ${pixelBtn}`}>RANKING</button>
+                  <button onClick={restartGame} className={`bg-[#ff0055] text-white text-sm md:text-lg py-2.5 md:py-3 ${pixelBtn} flex items-center justify-center`}><RotateCcw size={18} className="md:w-5 md:h-5 mr-2"/> HOME</button>
+                </div>
+              </div>
+            )}
+
+            {/* --- 5. LEADERBOARD SCREEN --- */}
+            {appState === 'leaderboard' && (
+              <div className={`bg-[#ff9900] p-4 md:p-8 ${pixelBorder} space-y-4 md:space-y-6 text-black`}>
+                <div className="flex justify-between items-center border-b-4 border-black pb-3 md:pb-4">
+                  <h2 className="text-lg md:text-3xl font-black retro-text text-white">RANKING</h2>
+                  <Trophy size={24} className="md:w-8 md:h-8 text-white" />
+                </div>
+
+                <div className="bg-white border-4 border-black h-64 md:h-80 overflow-y-auto p-2">
+                  {leaderboard.length === 0 ? <div className="text-center text-gray-500 font-bold mt-10 text-sm md:text-base">NO RECORDS</div> : (
+                    <table className="w-full text-left font-bold border-collapse text-[10px] sm:text-xs md:text-sm">
+                      <thead>
+                        <tr className="border-b-4 border-black text-gray-500 bg-gray-100">
+                          <th className="p-1.5 md:p-2 w-8 md:w-10">RK</th>
+                          <th className="p-1.5 md:p-2">NAME</th>
+                          <th className="p-1.5 md:p-2 w-10 md:w-16 text-center">ROOM</th>
+                          <th className="p-1.5 md:p-2 text-right">SCORE</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaderboard.map((record, idx) => (
+                          <tr key={record.id} className="border-b-2 border-dashed border-gray-300 hover:bg-yellow-100">
+                            <td className="p-1.5 md:p-2">{idx < 3 ? <span className="text-[#ff0055] retro-text">#{idx + 1}</span> : `#${idx + 1}`}</td>
+                            <td className="p-1.5 md:p-2 truncate max-w-[80px] sm:max-w-[120px] md:max-w-[200px]" title={record.name}>{record.name}</td>
+                            <td className="p-1.5 md:p-2 text-center text-gray-600">{record.room}</td>
+                            <td className="p-1.5 md:p-2 text-right text-[#00e676] retro-text text-xs md:text-base">{record.score}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <button onClick={restartGame} className={`w-full bg-[#9966ff] text-white text-base md:text-xl py-3 md:py-4 ${pixelBtn} flex items-center justify-center`}><ArrowRight className="mr-2" /> MAIN MENU</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ===================== ADMIN MODE ======================== */}
+        {appMode === 'admin' && (
+          <div className="w-full">
+            <div className={`bg-[#e5e7eb] p-4 md:p-8 ${pixelBorder} space-y-4 md:space-y-6 text-black`}>
+              
+              <div className="flex justify-between items-center border-b-4 border-black pb-3 md:pb-4">
+                <div className="flex items-center">
+                  <Shield className="mr-2 md:mr-3 text-[#ff0055]" size={24} />
+                  <h2 className="text-lg md:text-3xl font-black retro-text whitespace-nowrap">ADMIN CONTROL</h2>
+                </div>
+              </div>
+
+              {/* Stats Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 text-center">
+                <div className={`bg-white p-2 md:p-4 border-2 md:border-4 border-black shadow-[2px_2px_0_0_rgba(0,0,0,1)] md:shadow-[4px_4px_0_0_rgba(0,0,0,1)]`}>
+                  <div className="text-[10px] md:text-xs font-bold text-gray-500 mb-1">TOTAL</div>
+                  <div className="text-lg md:text-3xl font-black text-black">{leaderboard.length}</div>
+                </div>
+                <div className={`bg-white p-2 md:p-4 border-2 md:border-4 border-black shadow-[2px_2px_0_0_rgba(0,0,0,1)] md:shadow-[4px_4px_0_0_rgba(0,0,0,1)]`}>
+                  <div className="text-[10px] md:text-xs font-bold text-gray-500 mb-1">AVG SCORE</div>
+                  <div className="text-lg md:text-3xl font-black text-[#4ec0ca]">
+                    {leaderboard.length > 0 ? (leaderboard.reduce((a, b) => a + b.score, 0) / leaderboard.length).toFixed(1) : 0}
+                  </div>
+                </div>
+                <div className={`bg-white p-2 md:p-4 border-2 md:border-4 border-black shadow-[2px_2px_0_0_rgba(0,0,0,1)] md:shadow-[4px_4px_0_0_rgba(0,0,0,1)]`}>
+                  <div className="text-[10px] md:text-xs font-bold text-gray-500 mb-1">HIGH SCORE</div>
+                  <div className="text-lg md:text-3xl font-black text-[#00e676]">{leaderboard[0]?.score || 0}</div>
+                </div>
+                <div className={`bg-[#00e676] p-2 md:p-4 border-2 md:border-4 border-black shadow-[2px_2px_0_0_rgba(0,0,0,1)] md:shadow-[4px_4px_0_0_rgba(0,0,0,1)] cursor-pointer hover:bg-green-400 active:translate-y-1 active:shadow-none transition-all flex flex-col justify-center items-center`} onClick={exportCSV}>
+                  <Download size={18} className="md:w-6 md:h-6 mb-1 md:mb-2" />
+                  <div className="text-[9px] md:text-xs font-black">EXPORT CSV</div>
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div className="bg-white p-2 md:p-4 border-2 md:border-4 border-black shadow-[2px_2px_0_0_rgba(0,0,0,1)] md:shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
+                <div className="relative">
+                  <Search className="absolute left-2 md:left-3 top-2 md:top-3 text-gray-400" size={18} />
+                  <input type="text" placeholder="ค้นหา ชื่อ, เลขที่, ห้อง..." value={adminSearch} onChange={e => setAdminSearch(e.target.value)}
+                    className="w-full bg-gray-100 border-2 border-black text-black p-1.5 md:p-2 pl-8 md:pl-10 focus:outline-none focus:bg-white font-bold text-xs md:text-base" />
+                </div>
+              </div>
+
+              {/* Data Table */}
+              <div className="bg-white border-2 md:border-4 border-black shadow-[2px_2px_0_0_rgba(0,0,0,1)] md:shadow-[4px_4px_0_0_rgba(0,0,0,1)] overflow-hidden">
+                <div className="overflow-x-auto h-[350px] md:h-[400px]">
+                  <table className="w-full text-left font-bold text-[10px] sm:text-xs md:text-sm whitespace-nowrap min-w-[450px] md:min-w-[600px]">
+                    <thead className="bg-black text-white sticky top-0 z-10">
+                      <tr>
+                        <th className="p-2 md:p-3">วันที่/เวลา</th>
+                        <th className="p-2 md:p-3">ชื่อ-นามสกุล</th>
+                        <th className="p-2 md:p-3 text-center">เลขที่</th>
+                        <th className="p-2 md:p-3 text-center">ห้อง</th>
+                        <th className="p-2 md:p-3 text-center">คะแนน</th>
+                        <th className="p-2 md:p-3 text-center">จัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y-2 divide-gray-200">
+                      {filteredAdminList.map((record) => (
+                        <tr key={record.id} className="hover:bg-yellow-50 transition-colors">
+                          <td className="p-2 md:p-3 text-gray-500">{new Date(record.timestamp).toLocaleString('th-TH', {dateStyle: 'short', timeStyle: 'short'})}</td>
+                          <td className="p-2 md:p-3 max-w-[100px] md:max-w-[200px] truncate" title={record.name}>{record.name}</td>
+                          <td className="p-2 md:p-3 text-center">{record.studentNo}</td>
+                          <td className="p-2 md:p-3 text-center">{record.room}</td>
+                          <td className="p-2 md:p-3 text-center text-sm md:text-lg text-[#00e676] retro-text">{record.score}</td>
+                          <td className="p-2 md:p-3 text-center">
+                            <button onClick={() => triggerDelete(record.id)} className="text-white bg-red-500 hover:bg-red-600 border-2 border-black p-1 shadow-[2px_2px_0_0_rgba(0,0,0,1)] active:shadow-none active:translate-y-1 transition-all rounded-sm" title="ลบข้อมูล">
+                              <Trash2 size={14} className="md:w-4 md:h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {filteredAdminList.length === 0 && (
+                        <tr><td colSpan="6" className="p-4 md:p-6 text-center text-gray-500 bg-gray-50">ไม่พบข้อมูล</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* CREDITS FOOTER (Hides during the quiz to save vertical space on mobile) */}
+      {appState !== 'quiz' && (
+        <footer className="w-full bg-black/80 text-center py-3 md:py-4 px-2 mt-auto text-[10px] md:text-sm text-gray-400 font-bold retro-text z-20 border-t-2 border-white/10 relative">
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-1 sm:gap-2">
+            <span>จัดทำโดย ครูธรรมธัช ธรรมราช</span>
+            <span className="hidden sm:inline text-gray-600">|</span>
+            <span>กลุ่มสาระการเรียนรู้ภาษาต่างประเทศ</span>
+          </div>
+          <div className="mt-1 text-[#ffcc00] opacity-90">
+            โรงเรียนห้องสอนศึกษา ในพระอุปถัมภ์ฯ
+          </div>
+        </footer>
+      )}
+
+    </div>
+  );
+}
